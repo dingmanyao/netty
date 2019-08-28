@@ -18,7 +18,6 @@ package io.netty.bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.EventLoop;
@@ -27,9 +26,9 @@ import io.netty.resolver.AddressResolver;
 import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NameResolver;
 import io.netty.resolver.AddressResolverGroup;
-import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.FutureListener;
+import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -91,7 +90,7 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
     }
 
     /**
-     * @see {@link #remoteAddress(SocketAddress)}
+     * @see #remoteAddress(SocketAddress)
      */
     public Bootstrap remoteAddress(String inetHost, int inetPort) {
         remoteAddress = InetSocketAddress.createUnresolved(inetHost, inetPort);
@@ -99,7 +98,7 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
     }
 
     /**
-     * @see {@link #remoteAddress(SocketAddress)}
+     * @see #remoteAddress(SocketAddress)
      */
     public Bootstrap remoteAddress(InetAddress inetHost, int inetPort) {
         remoteAddress = new InetSocketAddress(inetHost, inetPort);
@@ -137,10 +136,7 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
      * Connect a {@link Channel} to the remote peer.
      */
     public ChannelFuture connect(SocketAddress remoteAddress) {
-        if (remoteAddress == null) {
-            throw new NullPointerException("remoteAddress");
-        }
-
+        ObjectUtil.checkNotNull(remoteAddress, "remoteAddress");
         validate();
         return doResolveAndConnect(remoteAddress, config.localAddress());
     }
@@ -149,15 +145,13 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
      * Connect a {@link Channel} to the remote peer.
      */
     public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress) {
-        if (remoteAddress == null) {
-            throw new NullPointerException("remoteAddress");
-        }
+        ObjectUtil.checkNotNull(remoteAddress, "remoteAddress");
         validate();
         return doResolveAndConnect(remoteAddress, localAddress);
     }
 
     /**
-     * @see {@link #connect()}
+     * @see #connect()
      */
     private ChannelFuture doResolveAndConnect(final SocketAddress remoteAddress, final SocketAddress localAddress) {
         final ChannelFuture regFuture = initAndRegister();
@@ -174,7 +168,7 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
             regFuture.addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
-                    // Direclty obtain the cause and do a null check so we only need one volatile read in case of a
+                    // Directly obtain the cause and do a null check so we only need one volatile read in case of a
                     // failure.
                     Throwable cause = future.cause();
                     if (cause != null) {
@@ -260,29 +254,12 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
 
     @Override
     @SuppressWarnings("unchecked")
-    void init(Channel channel) throws Exception {
+    void init(Channel channel) {
         ChannelPipeline p = channel.pipeline();
         p.addLast(config.handler());
 
-        final Map<ChannelOption<?>, Object> options = options0();
-        synchronized (options) {
-            for (Entry<ChannelOption<?>, Object> e: options.entrySet()) {
-                try {
-                    if (!channel.config().setOption((ChannelOption<Object>) e.getKey(), e.getValue())) {
-                        logger.warn("Unknown channel option: " + e);
-                    }
-                } catch (Throwable t) {
-                    logger.warn("Failed to set a channel option: " + channel, t);
-                }
-            }
-        }
-
-        final Map<AttributeKey<?>, Object> attrs = attrs0();
-        synchronized (attrs) {
-            for (Entry<AttributeKey<?>, Object> e: attrs.entrySet()) {
-                channel.attr((AttributeKey<Object>) e.getKey()).set(e.getValue());
-            }
-        }
+        setChannelOptions(channel, options0().entrySet().toArray(newOptionArray(0)), logger);
+        setAttributes(channel, attrs0().entrySet().toArray(newAttrArray(0)));
     }
 
     @Override

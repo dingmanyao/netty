@@ -63,7 +63,7 @@ public class DatagramPacketEncoder<M> extends MessageToMessageEncoder<AddressedE
             @SuppressWarnings("rawtypes")
             AddressedEnvelope envelope = (AddressedEnvelope) msg;
             return encoder.acceptOutboundMessage(envelope.content())
-                    && envelope.sender() instanceof InetSocketAddress
+                    && (envelope.sender() instanceof InetSocketAddress || envelope.sender() == null)
                     && envelope.recipient() instanceof InetSocketAddress;
         }
         return false;
@@ -139,5 +139,10 @@ public class DatagramPacketEncoder<M> extends MessageToMessageEncoder<AddressedE
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         encoder.exceptionCaught(ctx, cause);
+    }
+
+    @Override
+    public boolean isSharable() {
+        return encoder.isSharable();
     }
 }

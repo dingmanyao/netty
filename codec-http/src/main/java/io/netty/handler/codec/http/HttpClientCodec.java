@@ -47,6 +47,7 @@ public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResp
 
     /** A queue that is used for correlating a request and a response. */
     private final Queue<HttpMethod> queue = new ArrayDeque<HttpMethod>();
+    private final boolean parseHttpAfterConnectRequest;
 
     /** If true, decoding stops (i.e. pass-through) */
     private boolean done;
@@ -84,8 +85,18 @@ public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResp
     public HttpClientCodec(
             int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
             boolean validateHeaders) {
+        this(maxInitialLineLength, maxHeaderSize, maxChunkSize, failOnMissingResponse, validateHeaders, false);
+    }
+
+    /**
+     * Creates a new instance with the specified decoder options.
+     */
+    public HttpClientCodec(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
+            boolean validateHeaders, boolean parseHttpAfterConnectRequest) {
         init(new Decoder(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders), new Encoder());
         this.failOnMissingResponse = failOnMissingResponse;
+        this.parseHttpAfterConnectRequest = parseHttpAfterConnectRequest;
     }
 
     /**
@@ -94,8 +105,19 @@ public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResp
     public HttpClientCodec(
             int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
             boolean validateHeaders, int initialBufferSize) {
+        this(maxInitialLineLength, maxHeaderSize, maxChunkSize, failOnMissingResponse, validateHeaders,
+                initialBufferSize, false);
+    }
+
+    /**
+     * Creates a new instance with the specified decoder options.
+     */
+    public HttpClientCodec(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
+            boolean validateHeaders, int initialBufferSize, boolean parseHttpAfterConnectRequest) {
         init(new Decoder(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders, initialBufferSize),
              new Encoder());
+        this.parseHttpAfterConnectRequest = parseHttpAfterConnectRequest;
         this.failOnMissingResponse = failOnMissingResponse;
     }
 
@@ -138,13 +160,13 @@ public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResp
                 return;
             }
 
-            if (msg instanceof HttpRequest && !done) {
+            if (msg instanceof HttpRequest) {
                 queue.offer(((HttpRequest) msg).method());
             }
 
             super.encode(ctx, msg, out);
 
-            if (failOnMissingResponse) {
+            if (failOnMissingResponse && !done) {
                 // check if the request is chunked if so do not increment
                 if (msg instanceof LastHttpContent) {
                     // increment as its the last chunk
@@ -201,52 +223,59 @@ public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResp
         @Override
         protected boolean isContentAlwaysEmpty(HttpMessage msg) {
             final int statusCode = ((HttpResponse) msg).status().code();
-            if (statusCode == 100) {
-                // 100-continue response should be excluded from paired comparison.
-                return true;
+            if (statusCode == 100 || statusCode == 101) {
+                // 100-continue and 101 switching protocols response should be excluded from paired comparison.
+                // Just delegate to super method which has all the needed handling.
+                return super.isContentAlwaysEmpty(msg);
             }
 
             // Get the getMethod of the HTTP request that corresponds to the
             // current response.
             HttpMethod method = queue.poll();
 
-            char firstChar = method.name().charAt(0);
-            switch (firstChar) {
-            case 'H':
-                // According to 4.3, RFC2616:
-                // All responses to the HEAD request getMethod MUST NOT include a
-                // message-body, even though the presence of entity-header fields
-                // might lead one to believe they do.
-                if (HttpMethod.HEAD.equals(method)) {
-                    return true;
+            // If the remote peer did for example send multiple responses for one request (which is not allowed per
+            // spec but may still be possible) method will be null so guard against it.
+            if (method != null) {
+                char firstChar = method.name().charAt(0);
+                switch (firstChar) {
+                    case 'H':
+                        // According to 4.3, RFC2616:
+                        // All responses to the HEAD request method MUST NOT include a
+                        // message-body, even though the presence of entity-header fields
+                        // might lead one to believe they do.
+                        if (HttpMethod.HEAD.equals(method)) {
+                            return true;
 
-                    // The following code was inserted to work around the servers
-                    // that behave incorrectly.  It has been commented out
-                    // because it does not work with well behaving servers.
-                    // Please note, even if the 'Transfer-Encoding: chunked'
-                    // header exists in the HEAD response, the response should
-                    // have absolutely no content.
-                    //
-                    //// Interesting edge case:
-                    //// Some poorly implemented servers will send a zero-byte
-                    //// chunk if Transfer-Encoding of the response is 'chunked'.
-                    ////
-                    //// return !msg.isChunked();
+                            // The following code was inserted to work around the servers
+                            // that behave incorrectly.  It has been commented out
+                            // because it does not work with well behaving servers.
+                            // Please note, even if the 'Transfer-Encoding: chunked'
+                            // header exists in the HEAD response, the response should
+                            // have absolutely no content.
+                            //
+                            //// Interesting edge case:
+                            //// Some poorly implemented servers will send a zero-byte
+                            //// chunk if Transfer-Encoding of the response is 'chunked'.
+                            ////
+                            //// return !msg.isChunked();
+                        }
+                        break;
+                    case 'C':
+                        // Successful CONNECT request results in a response with empty body.
+                        if (statusCode == 200) {
+                            if (HttpMethod.CONNECT.equals(method)) {
+                                // Proxy connection established - Parse HTTP only if configured by
+                                // parseHttpAfterConnectRequest, else pass through.
+                                if (!parseHttpAfterConnectRequest) {
+                                    done = true;
+                                    queue.clear();
+                                }
+                                return true;
+                            }
+                        }
+                        break;
                 }
-                break;
-            case 'C':
-                // Successful CONNECT request results in a response with empty body.
-                if (statusCode == 200) {
-                    if (HttpMethod.CONNECT.equals(method)) {
-                        // Proxy connection established - Not HTTP anymore.
-                        done = true;
-                        queue.clear();
-                        return true;
-                    }
-                }
-                break;
             }
-
             return super.isContentAlwaysEmpty(msg);
         }
 

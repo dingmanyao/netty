@@ -20,6 +20,7 @@ import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.UnstableApi;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -33,7 +34,7 @@ public final class SmtpRequests {
     private static final SmtpRequest RSET = new DefaultSmtpRequest(SmtpCommand.RSET);
     private static final SmtpRequest HELP_NO_ARG = new DefaultSmtpRequest(SmtpCommand.HELP);
     private static final SmtpRequest QUIT = new DefaultSmtpRequest(SmtpCommand.QUIT);
-    private static final AsciiString FROM_NULL_SENDER = new AsciiString("FROM:<>");
+    private static final AsciiString FROM_NULL_SENDER = AsciiString.cached("FROM:<>");
 
     /**
      * Creates a {@code HELO} request.
@@ -94,9 +95,7 @@ public final class SmtpRequests {
         } else {
             List<CharSequence> params = new ArrayList<CharSequence>(mailParameters.length + 1);
             params.add(sender != null? "FROM:<" + sender + '>' : FROM_NULL_SENDER);
-            for (CharSequence param : mailParameters) {
-                params.add(param);
-            }
+            Collections.addAll(params, mailParameters);
             return new DefaultSmtpRequest(SmtpCommand.MAIL, params);
         }
     }
@@ -111,9 +110,7 @@ public final class SmtpRequests {
         } else {
             List<CharSequence> params = new ArrayList<CharSequence>(rcptParameters.length + 1);
             params.add("TO:<" + recipient + '>');
-            for (CharSequence param : rcptParameters) {
-                params.add(param);
-            }
+            Collections.addAll(params, rcptParameters);
             return new DefaultSmtpRequest(SmtpCommand.RCPT, params);
         }
     }

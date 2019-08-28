@@ -15,11 +15,10 @@
  */
 package io.netty.util.concurrent;
 
-import io.netty.util.Signal;
-import io.netty.util.internal.EmptyArrays;
 import io.netty.util.internal.InternalThreadLocalMap;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.StringUtil;
+import io.netty.util.internal.SystemPropertyUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -34,21 +33,13 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(DefaultPromise.class);
     private static final InternalLogger rejectedExecutionLogger =
             InternalLoggerFactory.getInstance(DefaultPromise.class.getName() + ".rejectedExecution");
-    private static final int MAX_LISTENER_STACK_DEPTH = 8;
+    private static final int MAX_LISTENER_STACK_DEPTH = Math.min(8,
+            SystemPropertyUtil.getInt("io.netty.defaultPromise.maxListenerStackDepth", 8));
     @SuppressWarnings("rawtypes")
-    private static final AtomicReferenceFieldUpdater<DefaultPromise, Object> RESULT_UPDATER;
-    private static final Signal SUCCESS = Signal.valueOf(DefaultPromise.class, "SUCCESS");
-    private static final Signal UNCANCELLABLE = Signal.valueOf(DefaultPromise.class, "UNCANCELLABLE");
-    private static final CauseHolder CANCELLATION_CAUSE_HOLDER = new CauseHolder(new CancellationException());
-
-    static {
-        @SuppressWarnings("rawtypes")
-        AtomicReferenceFieldUpdater<DefaultPromise, Object> updater =
-                PlatformDependent.newAtomicReferenceFieldUpdater(DefaultPromise.class, "result");
-        RESULT_UPDATER = updater == null ? AtomicReferenceFieldUpdater.newUpdater(DefaultPromise.class,
-                                                                                  Object.class, "result") : updater;
-        CANCELLATION_CAUSE_HOLDER.cause.setStackTrace(EmptyArrays.EMPTY_STACK_TRACE);
-    }
+    private static final AtomicReferenceFieldUpdater<DefaultPromise, Object> RESULT_UPDATER =
+            AtomicReferenceFieldUpdater.newUpdater(DefaultPromise.class, Object.class, "result");
+    private static final Object SUCCESS = new Object();
+    private static final Object UNCANCELLABLE = new Object();
 
     private volatile Object result;
     private final EventExecutor executor;
@@ -97,7 +88,6 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     @Override
     public Promise<V> setSuccess(V result) {
         if (setSuccess0(result)) {
-            notifyListeners();
             return this;
         }
         throw new IllegalStateException("complete already: " + this);
@@ -105,17 +95,12 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
 
     @Override
     public boolean trySuccess(V result) {
-        if (setSuccess0(result)) {
-            notifyListeners();
-            return true;
-        }
-        return false;
+        return setSuccess0(result);
     }
 
     @Override
     public Promise<V> setFailure(Throwable cause) {
         if (setFailure0(cause)) {
-            notifyListeners();
             return this;
         }
         throw new IllegalStateException("complete already: " + this, cause);
@@ -123,11 +108,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
 
     @Override
     public boolean tryFailure(Throwable cause) {
-        if (setFailure0(cause)) {
-            notifyListeners();
-            return true;
-        }
-        return false;
+        return setFailure0(cause);
     }
 
     @Override
@@ -307,17 +288,24 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     @Override
     public V getNow() {
         Object result = this.result;
-        if (result instanceof CauseHolder || result == SUCCESS) {
+        if (result instanceof CauseHolder || result == SUCCESS || result == UNCANCELLABLE) {
             return null;
         }
         return (V) result;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @param mayInterruptIfRunning this value has no effect in this implementation.
+     */
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
-        if (RESULT_UPDATER.compareAndSet(this, null, CANCELLATION_CAUSE_HOLDER)) {
-            checkNotifyWaiters();
-            notifyListeners();
+        if (RESULT_UPDATER.get(this) == null &&
+                RESULT_UPDATER.compareAndSet(this, null, new CauseHolder(new CancellationException()))) {
+            if (checkNotifyWaiters()) {
+                notifyListeners();
+            }
             return true;
         }
         return false;
@@ -415,14 +403,6 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     }
 
     private void notifyListeners() {
-        // Modifications to listeners should be done in a synchronized block before this, and should be visible here.
-        if (listeners == null) {
-            return;
-        }
-        notifyListenersWithStackOverFlowProtection();
-    }
-
-    private void notifyListenersWithStackOverFlowProtection() {
         EventExecutor executor = executor();
         if (executor.inEventLoop()) {
             final InternalThreadLocalMap threadLocals = InternalThreadLocalMap.get();
@@ -447,7 +427,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     }
 
     /**
-     * The logic in this method should be identical to {@link #notifyListenersWithStackOverFlowProtection()} but
+     * The logic in this method should be identical to {@link #notifyListeners()} but
      * cannot share code because the listener(s) cannot be cached for an instance of {@link DefaultPromise} since the
      * listener(s) may be changed and is protected by a synchronized operation.
      */
@@ -491,7 +471,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
             if (listeners instanceof DefaultFutureListeners) {
                 notifyListeners0((DefaultFutureListeners) listeners);
             } else {
-                notifyListener0(this, (GenericFutureListener<? extends Future<V>>) listeners);
+                notifyListener0(this, (GenericFutureListener<?>) listeners);
             }
             synchronized (this) {
                 if (this.listeners == null) {
@@ -519,7 +499,9 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         try {
             l.operationComplete(future);
         } catch (Throwable t) {
-            logger.warn("An exception was thrown by {}.operationComplete()", l.getClass().getName(), t);
+            if (logger.isWarnEnabled()) {
+                logger.warn("An exception was thrown by " + l.getClass().getName() + ".operationComplete()", t);
+            }
         }
     }
 
@@ -529,7 +511,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         } else if (listeners instanceof DefaultFutureListeners) {
             ((DefaultFutureListeners) listeners).add(listener);
         } else {
-            listeners = new DefaultFutureListeners((GenericFutureListener<? extends Future<V>>) listeners, listener);
+            listeners = new DefaultFutureListeners((GenericFutureListener<?>) listeners, listener);
         }
     }
 
@@ -552,16 +534,23 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     private boolean setValue0(Object objResult) {
         if (RESULT_UPDATER.compareAndSet(this, null, objResult) ||
             RESULT_UPDATER.compareAndSet(this, UNCANCELLABLE, objResult)) {
-            checkNotifyWaiters();
+            if (checkNotifyWaiters()) {
+                notifyListeners();
+            }
             return true;
         }
         return false;
     }
 
-    private synchronized void checkNotifyWaiters() {
+    /**
+     * Check if there are any waiters and if so notify these.
+     * @return {@code true} if there are any listeners attached to the promise, {@code false} otherwise.
+     */
+    private synchronized boolean checkNotifyWaiters() {
         if (waiters > 0) {
             notifyAll();
         }
+        return listeners != null;
     }
 
     private void incWaiters() {
@@ -605,6 +594,9 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         try {
             for (;;) {
                 synchronized (this) {
+                    if (isDone()) {
+                        return true;
+                    }
                     incWaiters();
                     try {
                         wait(waitTime / 1000000, (int) (waitTime % 1000000));
@@ -746,7 +738,9 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         try {
             l.operationProgressed(future, progress, total);
         } catch (Throwable t) {
-            logger.warn("An exception was thrown by {}.operationProgressed()", l.getClass().getName(), t);
+            if (logger.isWarnEnabled()) {
+                logger.warn("An exception was thrown by " + l.getClass().getName() + ".operationProgressed()", t);
+            }
         }
     }
 

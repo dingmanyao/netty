@@ -174,7 +174,6 @@ public class TrafficCounter {
             if (trafficShapingHandler != null) {
                 trafficShapingHandler.doAccounting(TrafficCounter.this);
             }
-            scheduledFuture = executor.schedule(this, checkInterval.get(), TimeUnit.MILLISECONDS);
         }
     }
 
@@ -192,7 +191,7 @@ public class TrafficCounter {
             monitorActive = true;
             monitor = new TrafficMonitoringTask();
             scheduledFuture =
-                executor.schedule(monitor, localCheckInterval, TimeUnit.MILLISECONDS);
+                executor.scheduleAtFixedRate(monitor, 0, localCheckInterval, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -307,17 +306,18 @@ public class TrafficCounter {
     /**
      * Change checkInterval between two computations in millisecond.
      *
-     * @param newcheckInterval The new check interval (in milliseconds)
+     * @param newCheckInterval The new check interval (in milliseconds)
      */
-    public void configure(long newcheckInterval) {
-        long newInterval = newcheckInterval / 10 * 10;
+    public void configure(long newCheckInterval) {
+        long newInterval = newCheckInterval / 10 * 10;
         if (checkInterval.getAndSet(newInterval) != newInterval) {
             if (newInterval <= 0) {
                 stop();
                 // No more active monitoring
                 lastTime.set(milliSecondFromNano());
             } else {
-                // Start if necessary
+                // Restart
+                stop();
                 start();
             }
         }

@@ -69,7 +69,7 @@ public class SwappedByteBuf extends ByteBuf {
 
     @Override
     public ByteBuf unwrap() {
-        return buf.unwrap();
+        return buf;
     }
 
     @Override
@@ -149,6 +149,11 @@ public class SwappedByteBuf extends ByteBuf {
     @Override
     public int maxWritableBytes() {
         return buf.maxWritableBytes();
+    }
+
+    @Override
+    public int maxFastWritableBytes() {
+        return buf.maxFastWritableBytes();
     }
 
     @Override
@@ -896,7 +901,7 @@ public class SwappedByteBuf extends ByteBuf {
 
     @Override
     public ByteBuf retainedSlice() {
-        return buf.slice().order(order);
+        return buf.retainedSlice().order(order);
     }
 
     @Override
@@ -906,7 +911,7 @@ public class SwappedByteBuf extends ByteBuf {
 
     @Override
     public ByteBuf retainedSlice(int index, int length) {
-        return buf.slice(index, length).order(order);
+        return buf.retainedSlice(index, length).order(order);
     }
 
     @Override
@@ -995,6 +1000,11 @@ public class SwappedByteBuf extends ByteBuf {
     @Override
     public int refCnt() {
         return buf.refCnt();
+    }
+
+    @Override
+    final boolean isAccessible() {
+        return buf.isAccessible();
     }
 
     @Override

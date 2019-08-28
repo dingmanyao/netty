@@ -25,7 +25,10 @@ import java.net.SocketAddress;
 
 /**
  * Abstract base class for {@link Channel} implementations that use Old-Blocking-IO
+ *
+ * @deprecated use NIO / EPOLL / KQUEUE transport.
  */
+@Deprecated
 public abstract class AbstractOioChannel extends AbstractChannel {
 
     protected static final int SO_TIMEOUT = 1000;
@@ -68,8 +71,13 @@ public abstract class AbstractOioChannel extends AbstractChannel {
             try {
                 boolean wasActive = isActive();
                 doConnect(remoteAddress, localAddress);
+
+                // Get the state as trySuccess() may trigger an ChannelFutureListener that will close the Channel.
+                // We still need to ensure we call fireChannelActive() in this case.
+                boolean active = isActive();
+
                 safeSetSuccess(promise);
-                if (!wasActive && isActive()) {
+                if (!wasActive && active) {
                     pipeline().fireChannelActive();
                 }
             } catch (Throwable t) {

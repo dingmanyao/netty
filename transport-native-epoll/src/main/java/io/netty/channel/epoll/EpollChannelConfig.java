@@ -26,12 +26,13 @@ import io.netty.channel.WriteBufferWaterMark;
 import java.io.IOException;
 import java.util.Map;
 
+import static io.netty.channel.unix.Limits.SSIZE_MAX;
+
 public class EpollChannelConfig extends DefaultChannelConfig {
-    final AbstractEpollChannel channel;
+    private volatile long maxBytesPerGatheringWrite = SSIZE_MAX;
 
     EpollChannelConfig(AbstractEpollChannel channel) {
         super(channel);
-        this.channel = channel;
     }
 
     @Override
@@ -86,6 +87,10 @@ public class EpollChannelConfig extends DefaultChannelConfig {
 
     @Override
     public EpollChannelConfig setRecvByteBufAllocator(RecvByteBufAllocator allocator) {
+        if (!(allocator.newHandle() instanceof RecvByteBufAllocator.ExtendedHandle)) {
+            throw new IllegalArgumentException("allocator.newHandle() must return an object of type: " +
+                    RecvByteBufAllocator.ExtendedHandle.class);
+        }
         super.setRecvByteBufAllocator(allocator);
         return this;
     }
@@ -129,7 +134,7 @@ public class EpollChannelConfig extends DefaultChannelConfig {
      * {@link EpollMode#LEVEL_TRIGGERED}.
      */
     public EpollMode getEpollMode() {
-        return channel.isFlagSet(Native.EPOLLET)
+        return ((AbstractEpollChannel) channel).isFlagSet(Native.EPOLLET)
                 ? EpollMode.EDGE_TRIGGERED : EpollMode.LEVEL_TRIGGERED;
     }
 
@@ -145,21 +150,17 @@ public class EpollChannelConfig extends DefaultChannelConfig {
         if (mode == null) {
             throw new NullPointerException("mode");
         }
-        try {
-            switch (mode) {
+        switch (mode) {
             case EDGE_TRIGGERED:
                 checkChannelNotRegistered();
-                channel.setFlag(Native.EPOLLET);
+                ((AbstractEpollChannel) channel).setFlag(Native.EPOLLET);
                 break;
             case LEVEL_TRIGGERED:
                 checkChannelNotRegistered();
-                channel.clearFlag(Native.EPOLLET);
+                ((AbstractEpollChannel) channel).clearFlag(Native.EPOLLET);
                 break;
             default:
                 throw new Error();
-            }
-        } catch (IOException e) {
-            throw new ChannelException(e);
         }
         return this;
     }
@@ -172,6 +173,14 @@ public class EpollChannelConfig extends DefaultChannelConfig {
 
     @Override
     protected final void autoReadCleared() {
-        channel.clearEpollIn();
+        ((AbstractEpollChannel) channel).clearEpollIn();
+    }
+
+    final void setMaxBytesPerGatheringWrite(long maxBytesPerGatheringWrite) {
+        this.maxBytesPerGatheringWrite = maxBytesPerGatheringWrite;
+    }
+
+    final long getMaxBytesPerGatheringWrite() {
+        return maxBytesPerGatheringWrite;
     }
 }

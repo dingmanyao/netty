@@ -15,9 +15,12 @@
  */
 package io.netty.handler.codec.http2;
 
+import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.DefaultByteBufHolder;
 import io.netty.buffer.Unpooled;
+import io.netty.util.internal.StringUtil;
 import io.netty.util.internal.UnstableApi;
 
 /**
@@ -25,7 +28,9 @@ import io.netty.util.internal.UnstableApi;
  */
 @UnstableApi
 public final class DefaultHttp2GoAwayFrame extends DefaultByteBufHolder implements Http2GoAwayFrame {
+
     private final long errorCode;
+    private final int lastStreamId;
     private int extraStreamIds;
 
     /**
@@ -47,7 +52,7 @@ public final class DefaultHttp2GoAwayFrame extends DefaultByteBufHolder implemen
     }
 
     /**
-     * Equivalent to {@code new DefaultHttp2GoAwayFrame(error.code(), content)}.
+     *
      *
      * @param error non-{@code null} reason for the go away
      * @param content non-{@code null} debug data
@@ -63,8 +68,24 @@ public final class DefaultHttp2GoAwayFrame extends DefaultByteBufHolder implemen
      * @param content non-{@code null} debug data
      */
     public DefaultHttp2GoAwayFrame(long errorCode, ByteBuf content) {
+        this(-1, errorCode, content);
+    }
+
+    /**
+     * Construct a new GOAWAY message.
+     *
+     * This constructor is for internal use only. A user should not have to specify a specific last stream identifier,
+     * but use {@link #setExtraStreamIds(int)} instead.
+     */
+    DefaultHttp2GoAwayFrame(int lastStreamId, long errorCode, ByteBuf content) {
         super(content);
         this.errorCode = errorCode;
+        this.lastStreamId = lastStreamId;
+    }
+
+    @Override
+    public String name() {
+        return "GOAWAY";
     }
 
     @Override
@@ -79,16 +100,19 @@ public final class DefaultHttp2GoAwayFrame extends DefaultByteBufHolder implemen
 
     @Override
     public Http2GoAwayFrame setExtraStreamIds(int extraStreamIds) {
-        if (extraStreamIds < 0) {
-            throw new IllegalArgumentException("extraStreamIds must be non-negative");
-        }
+        checkPositiveOrZero(extraStreamIds, "extraStreamIds");
         this.extraStreamIds = extraStreamIds;
         return this;
     }
 
     @Override
+    public int lastStreamId() {
+        return lastStreamId;
+    }
+
+    @Override
     public Http2GoAwayFrame copy() {
-        return (Http2GoAwayFrame) super.copy();
+        return new DefaultHttp2GoAwayFrame(lastStreamId, errorCode, content().copy());
     }
 
     @Override
@@ -136,22 +160,20 @@ public final class DefaultHttp2GoAwayFrame extends DefaultByteBufHolder implemen
             return false;
         }
         DefaultHttp2GoAwayFrame other = (DefaultHttp2GoAwayFrame) o;
-        return super.equals(o) && errorCode == other.errorCode && content().equals(other.content())
-            && extraStreamIds == other.extraStreamIds;
+        return errorCode == other.errorCode && extraStreamIds == other.extraStreamIds && super.equals(other);
     }
 
     @Override
     public int hashCode() {
-        int hash = 237395317;
+        int hash = super.hashCode();
         hash = hash * 31 + (int) (errorCode ^ (errorCode >>> 32));
-        hash = hash * 31 + content().hashCode();
         hash = hash * 31 + extraStreamIds;
         return hash;
     }
 
     @Override
     public String toString() {
-        return "DefaultHttp2GoAwayFrame(errorCode=" + errorCode + ", content=" + content()
-               + ", extraStreamIds=" + extraStreamIds + ")";
+        return StringUtil.simpleClassName(this) + "(errorCode=" + errorCode + ", content=" + content()
+               + ", extraStreamIds=" + extraStreamIds + ", lastStreamId=" + lastStreamId + ')';
     }
 }

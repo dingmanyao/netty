@@ -44,6 +44,7 @@ import io.netty.util.CharsetUtil;
 
 import java.util.concurrent.TimeUnit;
 
+import static io.netty.buffer.Unpooled.wrappedBuffer;
 import static io.netty.handler.codec.http.HttpMethod.GET;
 import static io.netty.handler.codec.http.HttpMethod.POST;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
@@ -113,25 +114,25 @@ public final class Http2Client {
             System.err.println("Sending request(s)...");
             if (URL != null) {
                 // Create a simple GET request.
-                FullHttpRequest request = new DefaultFullHttpRequest(HTTP_1_1, GET, URL);
+                FullHttpRequest request = new DefaultFullHttpRequest(HTTP_1_1, GET, URL, Unpooled.EMPTY_BUFFER);
                 request.headers().add(HttpHeaderNames.HOST, hostName);
                 request.headers().add(HttpConversionUtil.ExtensionHeaderNames.SCHEME.text(), scheme.name());
                 request.headers().add(HttpHeaderNames.ACCEPT_ENCODING, HttpHeaderValues.GZIP);
                 request.headers().add(HttpHeaderNames.ACCEPT_ENCODING, HttpHeaderValues.DEFLATE);
-                responseHandler.put(streamId, channel.writeAndFlush(request), channel.newPromise());
+                responseHandler.put(streamId, channel.write(request), channel.newPromise());
                 streamId += 2;
             }
             if (URL2 != null) {
                 // Create a simple POST request with a body.
                 FullHttpRequest request = new DefaultFullHttpRequest(HTTP_1_1, POST, URL2,
-                                Unpooled.copiedBuffer(URL2DATA.getBytes(CharsetUtil.UTF_8)));
+                        wrappedBuffer(URL2DATA.getBytes(CharsetUtil.UTF_8)));
                 request.headers().add(HttpHeaderNames.HOST, hostName);
                 request.headers().add(HttpConversionUtil.ExtensionHeaderNames.SCHEME.text(), scheme.name());
                 request.headers().add(HttpHeaderNames.ACCEPT_ENCODING, HttpHeaderValues.GZIP);
                 request.headers().add(HttpHeaderNames.ACCEPT_ENCODING, HttpHeaderValues.DEFLATE);
-                responseHandler.put(streamId, channel.writeAndFlush(request), channel.newPromise());
-                streamId += 2;
+                responseHandler.put(streamId, channel.write(request), channel.newPromise());
             }
+            channel.flush();
             responseHandler.awaitResponses(5, TimeUnit.SECONDS);
             System.out.println("Finished HTTP/2 request(s)");
 

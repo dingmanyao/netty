@@ -18,10 +18,13 @@ package io.netty.handler.codec.smtp;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.EncoderException;
 import io.netty.util.CharsetUtil;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class SmtpRequestEncoderTest {
 
@@ -85,6 +88,33 @@ public class SmtpRequestEncoderTest {
                 new DefaultLastSmtpContent(Unpooled.copiedBuffer("Test\r\n", CharsetUtil.US_ASCII))));
         assertTrue(channel.finish());
 
+        assertEquals("DATA\r\nSubject: Test\r\n\r\nTest\r\n.\r\n", getWrittenString(channel));
+    }
+
+    @Test(expected = EncoderException.class)
+    public void testThrowsIfContentExpected() {
+        EmbeddedChannel channel = new EmbeddedChannel(new SmtpRequestEncoder());
+        try {
+            assertTrue(channel.writeOutbound(SmtpRequests.data()));
+            channel.writeOutbound(SmtpRequests.noop());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    public void testRsetClearsContentExpectedFlag() {
+        EmbeddedChannel channel = new EmbeddedChannel(new SmtpRequestEncoder());
+
+        assertTrue(channel.writeOutbound(SmtpRequests.data()));
+        assertTrue(channel.writeOutbound(SmtpRequests.rset()));
+        assertTrue(channel.writeOutbound(SmtpRequests.noop()));
+        assertTrue(channel.finish());
+
+        assertEquals("DATA\r\nRSET\r\nNOOP\r\n", getWrittenString(channel));
+    }
+
+    private static String getWrittenString(EmbeddedChannel channel) {
         ByteBuf written = Unpooled.buffer();
 
         for (;;) {
@@ -95,8 +125,11 @@ public class SmtpRequestEncoderTest {
             written.writeBytes(buffer);
             buffer.release();
         }
-        assertEquals("DATA\r\nSubject: Test\r\n\r\nTest\r\n.\r\n", written.toString(CharsetUtil.US_ASCII));
+
+        String writtenString = written.toString(CharsetUtil.US_ASCII);
         written.release();
+
+        return writtenString;
     }
 
     private static void testEncode(SmtpRequest request, String expected) {
